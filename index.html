@@ -1,135 +1,138 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Menger Sponge 3D</title>
-  </head>
-  <body>
-    <div id="app">
-      <!-- Settings Panel -->
-      <aside id="settings-panel">
-        <h1>🧊 Menger Sponge</h1>
-        <p class="subtitle">Interactive 3D fractal generator</p>
 
-        <form id="settings-form">
-          <div class="form-group">
-            <label for="level">
-              Iteration Level
-              <span class="hint">0 = solid cube · 4 = complex fractal</span>
-            </label>
-            <div class="slider-row">
-              <input type="range" id="level" name="level" min="0" max="4" value="2" step="1" />
-              <span class="slider-value" id="level-value">2</span>
-            </div>
-            <div class="level-marks">
-              <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span>
-            </div>
-          </div>
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Menger Sponge 3D</title>
+</head>
 
-          <div class="form-group">
-            <label for="spongeColor">Sponge Color</label>
-            <div class="color-row">
-              <input type="color" id="spongeColor" name="spongeColor" value="#1e88e5" />
-              <span class="color-label" id="spongeColor-label">#1e88e5</span>
-            </div>
-          </div>
+<body>
+  <div id="app">
+    <!-- Settings Panel -->
+    <aside id="settings-panel">
+      <h1>🧊 Menger Sponge</h1>
+      <p class="subtitle">Interactive 3D fractal generator</p>
 
-          <div class="form-group">
-            <label for="bgColor">Background Color</label>
-            <div class="color-row">
-              <input type="color" id="bgColor" name="bgColor" value="#0d0d1a" />
-              <span class="color-label" id="bgColor-label">#0d0d1a</span>
-            </div>
+      <form id="settings-form">
+        <div class="form-group">
+          <label for="level">
+            Iteration Level
+            <span class="hint">0 = solid cube · 4 = complex fractal</span>
+          </label>
+          <div class="slider-row">
+            <input type="range" id="level" name="level" min="0" max="4" value="2" step="1" />
+            <span class="slider-value" id="level-value">2</span>
           </div>
-
-          <div class="form-group">
-            <label for="edgeColor">Edge / Wireframe Color</label>
-            <div class="color-row">
-              <input type="color" id="edgeColor" name="edgeColor" value="#90caf9" />
-              <span class="color-label" id="edgeColor-label">#90caf9</span>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="opacity">
-              Opacity
-              <span class="hint">Transparency of the sponge faces</span>
-            </label>
-            <div class="slider-row">
-              <input type="range" id="opacity" name="opacity" min="0.1" max="1" value="1" step="0.05" />
-              <span class="slider-value" id="opacity-value">1.00</span>
-            </div>
-          </div>
-
-          <div class="form-group">
-            <label for="rotationSpeed">Rotation Speed</label>
-            <div class="slider-row">
-              <input type="range" id="rotationSpeed" name="rotationSpeed" min="0" max="5" value="1" step="0.1" />
-              <span class="slider-value" id="rotationSpeed-value">1.0</span>
-            </div>
-          </div>
-
-          <div class="form-group toggles">
-            <label class="toggle-label">
-              <input type="checkbox" id="wireframe" name="wireframe" />
-              <span class="toggle-switch"></span>
-              Wireframe Mode
-            </label>
-            <label class="toggle-label">
-              <input type="checkbox" id="autoRotate" name="autoRotate" checked />
-              <span class="toggle-switch"></span>
-              Auto Rotate
-            </label>
-            <label class="toggle-label">
-              <input type="checkbox" id="showEdges" name="showEdges" checked />
-              <span class="toggle-switch"></span>
-              Show Edges
-            </label>
-            <label class="toggle-label">
-              <input type="checkbox" id="flatShading" name="flatShading" />
-              <span class="toggle-switch"></span>
-              Flat Shading
-            </label>
-          </div>
-
-          <button type="submit" id="generate-btn">
-            <span id="btn-text">Generate Sponge</span>
-            <span id="btn-spinner" class="spinner hidden"></span>
-          </button>
-        </form>
-
-        <div id="stats-panel">
-          <div class="stat">
-            <span class="stat-label">Cubes</span>
-            <span class="stat-value" id="stat-cubes">—</span>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Grid Size</span>
-            <span class="stat-value" id="stat-grid">—</span>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Porosity</span>
-            <span class="stat-value" id="stat-porosity">—</span>
+          <div class="level-marks">
+            <span>0</span><span>1</span><span>2</span><span>3</span><span>4</span>
           </div>
         </div>
 
-        <p class="footer-hint">🖱 Drag to rotate · Scroll to zoom · Right-drag to pan</p>
-      </aside>
-
-      <!-- 3D Viewport -->
-      <main id="viewport">
-        <div id="loading-overlay" class="hidden">
-          <div class="loading-box">
-            <div class="big-spinner"></div>
-            <p id="loading-text">Generating Menger Sponge…</p>
+        <div class="form-group">
+          <label for="spongeColor">Sponge Color</label>
+          <div class="color-row">
+            <input type="color" id="spongeColor" name="spongeColor" value="#1e88e5" />
+            <span class="color-label" id="spongeColor-label">#1e88e5</span>
           </div>
         </div>
-        <canvas id="three-canvas"></canvas>
-      </main>
-    </div>
 
-    <script type="module" src="/src/main.js"></script>
-  </body>
+        <div class="form-group">
+          <label for="bgColor">Background Color</label>
+          <div class="color-row">
+            <input type="color" id="bgColor" name="bgColor" value="#0d0d1a" />
+            <span class="color-label" id="bgColor-label">#0d0d1a</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="edgeColor">Edge / Wireframe Color</label>
+          <div class="color-row">
+            <input type="color" id="edgeColor" name="edgeColor" value="#90caf9" />
+            <span class="color-label" id="edgeColor-label">#90caf9</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="opacity">
+            Opacity
+            <span class="hint">Transparency of the sponge faces</span>
+          </label>
+          <div class="slider-row">
+            <input type="range" id="opacity" name="opacity" min="0.1" max="1" value="1" step="0.05" />
+            <span class="slider-value" id="opacity-value">1.00</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="rotationSpeed">Rotation Speed</label>
+          <div class="slider-row">
+            <input type="range" id="rotationSpeed" name="rotationSpeed" min="0" max="5" value="1" step="0.1" />
+            <span class="slider-value" id="rotationSpeed-value">1.0</span>
+          </div>
+        </div>
+
+        <div class="form-group toggles">
+          <label class="toggle-label">
+            <input type="checkbox" id="wireframe" name="wireframe" />
+            <span class="toggle-switch"></span>
+            Wireframe Mode
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="autoRotate" name="autoRotate" checked />
+            <span class="toggle-switch"></span>
+            Auto Rotate
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="showEdges" name="showEdges" checked />
+            <span class="toggle-switch"></span>
+            Show Edges
+          </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="flatShading" name="flatShading" />
+            <span class="toggle-switch"></span>
+            Flat Shading
+          </label>
+        </div>
+
+        <button type="submit" id="generate-btn">
+          <span id="btn-text">Generate Sponge</span>
+          <span id="btn-spinner" class="spinner hidden"></span>
+        </button>
+      </form>
+
+      <div id="stats-panel">
+        <div class="stat">
+          <span class="stat-label">Cubes</span>
+          <span class="stat-value" id="stat-cubes">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Grid Size</span>
+          <span class="stat-value" id="stat-grid">—</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Porosity</span>
+          <span class="stat-value" id="stat-porosity">—</span>
+        </div>
+      </div>
+
+      <p class="footer-hint">🖱 Drag to rotate · Scroll to zoom · Right-drag to pan</p>
+    </aside>
+
+    <!-- 3D Viewport -->
+    <main id="viewport">
+      <div id="loading-overlay" class="hidden">
+        <div class="loading-box">
+          <div class="big-spinner"></div>
+          <p id="loading-text">Generating Menger Sponge…</p>
+        </div>
+      </div>
+      <canvas id="three-canvas"></canvas>
+    </main>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>
