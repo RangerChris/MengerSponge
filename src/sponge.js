@@ -1,7 +1,7 @@
 /**
  * Menger Sponge generation algorithm.
  *
- * A Menger Sponge is a fractal curve. Starting from a solid cube, at each
+ * A Menger Sponge is a three-dimensional fractal solid. Starting from a solid cube, at each
  * iteration the cube is divided into 27 equal sub-cubes (3×3×3) and the 7
  * sub-cubes that form the central cross on each axis are removed, leaving 20
  * sub-cubes. The process is repeated recursively on each remaining sub-cube.
