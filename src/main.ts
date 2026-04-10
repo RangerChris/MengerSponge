@@ -20,6 +20,8 @@ type NumericSettingKey = 'level' | 'opacity' | 'rotationSpeed';
 type ColorSettingKey = 'spongeColor' | 'bgColor' | 'edgeColor';
 type BooleanSettingKey = 'wireframe' | 'autoRotate' | 'showEdges' | 'flatShading';
 
+const MAX_ITERATION_LEVEL = 5;
+
 function mustGetElementById<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
 
@@ -250,7 +252,12 @@ function bindCheckbox<K extends BooleanSettingKey>(id: string, key: K): void {
   });
 }
 
-bindSlider('level', 'level', (raw) => Number.parseInt(raw, 10), (value) => Math.round(value).toString());
+bindSlider(
+  'level',
+  'level',
+  (raw) => Math.max(0, Math.min(MAX_ITERATION_LEVEL, Number.parseInt(raw, 10))),
+  (value) => Math.round(value).toString(),
+);
 bindSlider('opacity', 'opacity', (raw) => Number.parseFloat(raw), (value) => value.toFixed(2));
 bindSlider('rotationSpeed', 'rotationSpeed', (raw) => Number.parseFloat(raw), (value) => value.toFixed(1));
 bindColor('spongeColor', 'spongeColor');
