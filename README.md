@@ -2,6 +2,8 @@
 
 Interactive 3D Menger Sponge generator built with Vite, Three.js, and TypeScript.
 
+Try it at https://rangerchris.github.io/MengerSponge
+
 ![screenshot](screenshot.png)
 
 ## Requirements
