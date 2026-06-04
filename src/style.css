@@ -61,6 +61,25 @@ body {
   height: 100% !important;
 }
 
+#perf-hud {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 25;
+  pointer-events: none;
+  white-space: pre;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(8, 12, 20, 0.62);
+  color: #dbeafe;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+
 /* ─── Panel Header ─────────────────────────────────────────────────── */
 h1 {
   font-size: 1.4rem;

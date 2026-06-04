@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { calcPorosity, generateMengerSponge } from './sponge';
+import { calcPorosity } from './sponge';
 import './style.css';
 
 interface Settings {
@@ -21,6 +21,22 @@ type ColorSettingKey = 'spongeColor' | 'bgColor' | 'edgeColor';
 type BooleanSettingKey = 'wireframe' | 'autoRotate' | 'showEdges' | 'flatShading';
 
 const MAX_ITERATION_LEVEL = 5;
+const DENSE_RENDER_LEVEL = 5;
+const DENSE_CHUNK_GRID_SPAN = 27;
+const MAX_INSTANCES_PER_CHUNK = 30000;
+const QUALITY_UPSHIFT_FRAME_MS = 16.5;
+const QUALITY_DOWNSHIFT_FRAME_MS = 22;
+const QUALITY_SAMPLE_WINDOW = 45;
+
+interface BuildResponse {
+  requestId: number;
+  positions: Float32Array;
+  renderCount: number;
+  totalCount: number;
+  gridSize: number;
+  mode: 'full' | 'surface';
+  generationMs: number;
+}
 
 function mustGetElementById<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -39,6 +55,13 @@ const statGrid = mustGetElementById<HTMLElement>('stat-grid');
 const statPorosity = mustGetElementById<HTMLElement>('stat-porosity');
 const settingsForm = mustGetElementById<HTMLFormElement>('settings-form');
 const loadingOverlay = mustGetElementById<HTMLElement>('loading-overlay');
+const loadingText = mustGetElementById<HTMLElement>('loading-text');
+const generateButton = mustGetElementById<HTMLButtonElement>('generate-btn');
+const generateButtonText = mustGetElementById<HTMLElement>('btn-text');
+const generateButtonSpinner = mustGetElementById<HTMLElement>('btn-spinner');
+const perfHud = document.createElement('div');
+perfHud.id = 'perf-hud';
+viewport.appendChild(perfHud);
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -76,9 +99,26 @@ const fillLight = new THREE.DirectionalLight(0x8899ff, 0.4);
 fillLight.position.set(-8, -4, -6);
 scene.add(fillLight);
 
-let instancedMesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> | null = null;
-let edgesMesh: THREE.InstancedMesh<THREE.EdgesGeometry, THREE.LineBasicMaterial> | null = null;
-const dummy = new THREE.Object3D();
+let spongeMeshes: Array<THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>> = [];
+let edgeMeshes: Array<THREE.InstancedMesh<THREE.EdgesGeometry, THREE.LineBasicMaterial>> = [];
+let spongeGeometry: THREE.BoxGeometry | null = null;
+let spongeMaterial: THREE.MeshStandardMaterial | null = null;
+let edgeGeometry: THREE.EdgesGeometry | null = null;
+let edgeMaterial: THREE.LineBasicMaterial | null = null;
+let activeWorker: Worker | null = null;
+let activeBuildRequestId = 0;
+let denseModeEnabled = false;
+let pixelRatioCap = 2;
+let frameSampleCount = 0;
+let frameSampleTotalMs = 0;
+let frameSampleMaxMs = 0;
+let hudLastUpdateMs = 0;
+let currentRenderMode: BuildResponse['mode'] = 'full';
+let currentRenderCount = 0;
+let currentTotalCount = 0;
+let lastGenerationMs = 0;
+let lastMeshMs = 0;
+let lastFrameTimeMs = 0;
 
 let settings: Settings = {
   level: 2,
@@ -94,96 +134,348 @@ let settings: Settings = {
 };
 
 function buildSponge(cfg: Settings): void {
-  showLoading(true);
+  const requestId = ++activeBuildRequestId;
 
-  // Let the loading overlay paint before heavy geometry generation.
-  window.setTimeout(() => {
-    if (instancedMesh) {
-      scene.remove(instancedMesh);
-      instancedMesh.geometry.dispose();
-      instancedMesh.material.dispose();
-      instancedMesh = null;
+  if (activeWorker) {
+    activeWorker.terminate();
+    activeWorker = null;
+  }
+
+  setBusyState(true);
+  const modeLabel = cfg.level >= DENSE_RENDER_LEVEL ? 'surface optimization' : 'full geometry';
+  showLoading(true, `Precomputing level ${cfg.level} sponge (${modeLabel})...`);
+  applyDenseRenderMode(cfg.level >= DENSE_RENDER_LEVEL);
+
+  // Yield one frame so the loading overlay appears before build starts.
+  window.requestAnimationFrame(() => {
+    if (requestId !== activeBuildRequestId) {
+      return;
     }
 
-    if (edgesMesh) {
-      scene.remove(edgesMesh);
-      edgesMesh.geometry.dispose();
-      edgesMesh.material.dispose();
-      edgesMesh = null;
-    }
+    const worker = new Worker(new URL('./sponge.worker.ts', import.meta.url), { type: 'module' });
+    activeWorker = worker;
 
-    const { positions, count, gridSize } = generateMengerSponge(cfg.level);
+    worker.onmessage = (event: MessageEvent<BuildResponse>) => {
+      const { requestId: completedId, positions, renderCount, totalCount, gridSize, mode, generationMs } =
+        event.data;
 
-    const cubeSize = 3 / gridSize;
-    const gap = cubeSize * 0.02;
-    const boxSize = cubeSize - gap;
-
-    const geometry = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
-    if (cfg.flatShading) {
-      geometry.computeVertexNormals();
-    }
-
-    const material = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(cfg.spongeColor),
-      wireframe: cfg.wireframe,
-      transparent: cfg.opacity < 1,
-      opacity: cfg.opacity,
-      flatShading: cfg.flatShading,
-      roughness: 0.4,
-      metalness: 0.1,
-    });
-
-    instancedMesh = new THREE.InstancedMesh(geometry, material, count);
-    instancedMesh.castShadow = true;
-    instancedMesh.receiveShadow = true;
-
-    for (let i = 0; i < count; i += 1) {
-      const base = i * 3;
-      dummy.position.set(
-        positions[base] * cubeSize,
-        positions[base + 1] * cubeSize,
-        positions[base + 2] * cubeSize,
-      );
-      dummy.updateMatrix();
-      instancedMesh.setMatrixAt(i, dummy.matrix);
-    }
-
-    instancedMesh.instanceMatrix.needsUpdate = true;
-    scene.add(instancedMesh);
-
-    if (cfg.showEdges && !cfg.wireframe && cfg.level <= 3) {
-      const edgeGeometry = new THREE.EdgesGeometry(geometry);
-      const edgeMaterial = new THREE.LineBasicMaterial({
-        color: new THREE.Color(cfg.edgeColor),
-        transparent: true,
-        opacity: 0.35,
-      });
-
-      edgesMesh = new THREE.InstancedMesh(edgeGeometry, edgeMaterial, count);
-
-      for (let i = 0; i < count; i += 1) {
-        instancedMesh.getMatrixAt(i, dummy.matrix);
-        edgesMesh.setMatrixAt(i, dummy.matrix);
+      if (completedId !== activeBuildRequestId) {
+        return;
       }
 
-      edgesMesh.instanceMatrix.needsUpdate = true;
-      scene.add(edgesMesh);
-    }
+      const meshStart = performance.now();
+      clearMeshes();
+      createSpongeMesh(cfg, positions, renderCount, gridSize);
+      const meshMs = performance.now() - meshStart;
+      currentRenderMode = mode;
+      currentRenderCount = renderCount;
+      currentTotalCount = totalCount;
+      lastGenerationMs = generationMs;
+      lastMeshMs = meshMs;
+      updatePerfHud(performance.now(), 0);
 
-    statCubes.textContent = count.toLocaleString();
-    statGrid.textContent = `${gridSize}^3`;
-    statPorosity.textContent = `${(calcPorosity(cfg.level) * 100).toFixed(1)}%`;
+      statCubes.textContent =
+        mode === 'full' ? totalCount.toLocaleString() : `${renderCount.toLocaleString()} / ${totalCount.toLocaleString()}`;
+      statGrid.textContent = `${gridSize}^3`;
+      statPorosity.textContent = `${(calcPorosity(cfg.level) * 100).toFixed(1)}%`;
 
-    const half = 1.6;
-    camera.position.set(half * 3.2, half * 2.2, half * 4.5);
-    controls.target.set(0, 0, 0);
-    controls.update();
+      const half = 1.6;
+      camera.position.set(half * 3.2, half * 2.2, half * 4.5);
+      controls.target.set(0, 0, 0);
+      controls.update();
 
-    showLoading(false);
-  }, 20);
+      console.info(
+        `[perf] level ${cfg.level} (${mode}): generation ${generationMs.toFixed(1)}ms, mesh build ${meshMs.toFixed(1)}ms, rendered ${renderCount.toLocaleString()} / ${totalCount.toLocaleString()}`,
+      );
+
+      setBusyState(false);
+      showLoading(false);
+      worker.terminate();
+
+      if (activeWorker === worker) {
+        activeWorker = null;
+      }
+    };
+
+    worker.onerror = () => {
+      if (requestId !== activeBuildRequestId) {
+        return;
+      }
+
+      setBusyState(false);
+      showLoading(false);
+      worker.terminate();
+
+      if (activeWorker === worker) {
+        activeWorker = null;
+      }
+    };
+
+    worker.postMessage({
+      level: cfg.level,
+      requestId,
+    });
+  });
 }
 
-function showLoading(show: boolean): void {
+function createSpongeMesh(cfg: Settings, positions: Float32Array, count: number, gridSize: number): void {
+  const cubeSize = 3 / gridSize;
+  const gap = cubeSize * 0.02;
+  const boxSize = cubeSize - gap;
+  const chunkedMode = cfg.level >= DENSE_RENDER_LEVEL;
+
+  const geometry = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+  if (cfg.flatShading) {
+    geometry.computeVertexNormals();
+  }
+
+  const material = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(cfg.spongeColor),
+    wireframe: cfg.wireframe,
+    transparent: cfg.opacity < 1,
+    opacity: cfg.opacity,
+    flatShading: cfg.flatShading,
+    roughness: 0.4,
+    metalness: 0.1,
+  });
+  spongeGeometry = geometry;
+  spongeMaterial = material;
+
+  if (chunkedMode) {
+    createChunkedSpongeMeshes(positions, count, gridSize, cubeSize, geometry, material);
+  } else {
+    const mesh = new THREE.InstancedMesh(geometry, material, count);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    writeTranslationMatrices(mesh.instanceMatrix.array as Float32Array, positions, cubeSize, count);
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    scene.add(mesh);
+    spongeMeshes.push(mesh);
+  }
+
+  if (cfg.showEdges && !cfg.wireframe && cfg.level <= 3) {
+    const currentEdgeGeometry = new THREE.EdgesGeometry(geometry);
+    const currentEdgeMaterial = new THREE.LineBasicMaterial({
+      color: new THREE.Color(cfg.edgeColor),
+      transparent: true,
+      opacity: 0.35,
+    });
+    edgeGeometry = currentEdgeGeometry;
+    edgeMaterial = currentEdgeMaterial;
+
+    for (let i = 0; i < spongeMeshes.length; i += 1) {
+      const sourceMesh = spongeMeshes[i];
+      const edgeMesh = new THREE.InstancedMesh(currentEdgeGeometry, currentEdgeMaterial, sourceMesh.count);
+      edgeMesh.instanceMatrix.array.set(sourceMesh.instanceMatrix.array);
+      edgeMesh.instanceMatrix.needsUpdate = true;
+      edgeMesh.computeBoundingSphere();
+      scene.add(edgeMesh);
+      edgeMeshes.push(edgeMesh);
+    }
+  }
+}
+
+function createChunkedSpongeMeshes(
+  positions: Float32Array,
+  count: number,
+  gridSize: number,
+  cubeSize: number,
+  geometry: THREE.BoxGeometry,
+  material: THREE.MeshStandardMaterial,
+): void {
+  const offset = (gridSize - 1) / 2;
+  const chunkMap = new Map<string, number[]>();
+
+  for (let i = 0; i < count; i += 1) {
+    const base = i * 3;
+    const ix = Math.floor((positions[base] + offset) / DENSE_CHUNK_GRID_SPAN);
+    const iy = Math.floor((positions[base + 1] + offset) / DENSE_CHUNK_GRID_SPAN);
+    const iz = Math.floor((positions[base + 2] + offset) / DENSE_CHUNK_GRID_SPAN);
+    const key = `${ix}|${iy}|${iz}`;
+    const chunk = chunkMap.get(key);
+
+    if (chunk) {
+      chunk.push(i);
+    } else {
+      chunkMap.set(key, [i]);
+    }
+  }
+
+  for (const indices of chunkMap.values()) {
+    for (let start = 0; start < indices.length; start += MAX_INSTANCES_PER_CHUNK) {
+      const chunkCount = Math.min(MAX_INSTANCES_PER_CHUNK, indices.length - start);
+      const mesh = new THREE.InstancedMesh(geometry, material, chunkCount);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      writeTranslationMatricesFromIndices(
+        mesh.instanceMatrix.array as Float32Array,
+        positions,
+        cubeSize,
+        indices,
+        start,
+        chunkCount,
+      );
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      scene.add(mesh);
+      spongeMeshes.push(mesh);
+    }
+  }
+}
+
+function writeTranslationMatrices(
+  target: Float32Array,
+  positions: Float32Array,
+  cubeSize: number,
+  count: number,
+): void {
+  for (let i = 0; i < count; i += 1) {
+    const positionBase = i * 3;
+    const matrixBase = i * 16;
+
+    target[matrixBase] = 1;
+    target[matrixBase + 1] = 0;
+    target[matrixBase + 2] = 0;
+    target[matrixBase + 3] = 0;
+
+    target[matrixBase + 4] = 0;
+    target[matrixBase + 5] = 1;
+    target[matrixBase + 6] = 0;
+    target[matrixBase + 7] = 0;
+
+    target[matrixBase + 8] = 0;
+    target[matrixBase + 9] = 0;
+    target[matrixBase + 10] = 1;
+    target[matrixBase + 11] = 0;
+
+    target[matrixBase + 12] = positions[positionBase] * cubeSize;
+    target[matrixBase + 13] = positions[positionBase + 1] * cubeSize;
+    target[matrixBase + 14] = positions[positionBase + 2] * cubeSize;
+    target[matrixBase + 15] = 1;
+  }
+}
+
+function writeTranslationMatricesFromIndices(
+  target: Float32Array,
+  positions: Float32Array,
+  cubeSize: number,
+  indices: number[],
+  startIndex: number,
+  count: number,
+): void {
+  for (let i = 0; i < count; i += 1) {
+    const sourceIndex = indices[startIndex + i] * 3;
+    const matrixBase = i * 16;
+
+    target[matrixBase] = 1;
+    target[matrixBase + 1] = 0;
+    target[matrixBase + 2] = 0;
+    target[matrixBase + 3] = 0;
+
+    target[matrixBase + 4] = 0;
+    target[matrixBase + 5] = 1;
+    target[matrixBase + 6] = 0;
+    target[matrixBase + 7] = 0;
+
+    target[matrixBase + 8] = 0;
+    target[matrixBase + 9] = 0;
+    target[matrixBase + 10] = 1;
+    target[matrixBase + 11] = 0;
+
+    target[matrixBase + 12] = positions[sourceIndex] * cubeSize;
+    target[matrixBase + 13] = positions[sourceIndex + 1] * cubeSize;
+    target[matrixBase + 14] = positions[sourceIndex + 2] * cubeSize;
+    target[matrixBase + 15] = 1;
+  }
+}
+
+function clearMeshes(): void {
+  for (let i = 0; i < spongeMeshes.length; i += 1) {
+    scene.remove(spongeMeshes[i]);
+  }
+  spongeMeshes = [];
+
+  for (let i = 0; i < edgeMeshes.length; i += 1) {
+    scene.remove(edgeMeshes[i]);
+  }
+  edgeMeshes = [];
+
+  spongeGeometry?.dispose();
+  spongeMaterial?.dispose();
+  edgeGeometry?.dispose();
+  edgeMaterial?.dispose();
+  spongeGeometry = null;
+  spongeMaterial = null;
+  edgeGeometry = null;
+  edgeMaterial = null;
+}
+
+function setBusyState(isBusy: boolean): void {
+  generateButton.disabled = isBusy;
+  generateButtonText.textContent = isBusy ? 'Generating...' : 'Generate Sponge';
+  generateButtonSpinner.classList.toggle('hidden', !isBusy);
+}
+
+function applyPixelRatioCap(cap: number): void {
+  pixelRatioCap = cap;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, cap));
+}
+
+function applyDenseRenderMode(isDense: boolean): void {
+  denseModeEnabled = isDense;
+  applyPixelRatioCap(isDense ? 1 : 2);
+  renderer.shadowMap.enabled = !isDense;
+  dirLight.castShadow = !isDense;
+  fillLight.visible = !isDense;
+}
+
+function updateAdaptiveQuality(avgFrameMs: number): void {
+  if (!denseModeEnabled) {
+    return;
+  }
+
+  if (avgFrameMs > QUALITY_DOWNSHIFT_FRAME_MS && pixelRatioCap > 0.75) {
+    applyPixelRatioCap(0.75);
+  }
+
+  if (avgFrameMs < QUALITY_UPSHIFT_FRAME_MS && pixelRatioCap < 1) {
+    applyPixelRatioCap(1);
+  }
+}
+
+function updatePerfHud(now: number, frameMs: number): void {
+  if (frameMs > 0) {
+    frameSampleCount += 1;
+    frameSampleTotalMs += frameMs;
+    frameSampleMaxMs = Math.max(frameSampleMaxMs, frameMs);
+  }
+
+  if (frameSampleCount < QUALITY_SAMPLE_WINDOW || now - hudLastUpdateMs < 250) {
+    return;
+  }
+
+  const avgMs = frameSampleTotalMs / frameSampleCount;
+  const fps = avgMs > 0 ? 1000 / avgMs : 0;
+  updateAdaptiveQuality(avgMs);
+
+  perfHud.textContent = [
+    `fps ${fps.toFixed(1)} | avg ${avgMs.toFixed(1)}ms | max ${frameSampleMaxMs.toFixed(1)}ms`,
+    `render ${currentRenderCount.toLocaleString()} / ${currentTotalCount.toLocaleString()} | mode ${currentRenderMode}`,
+    `chunks ${spongeMeshes.length} | gen ${lastGenerationMs.toFixed(1)}ms | mesh ${lastMeshMs.toFixed(1)}ms | px ${pixelRatioCap.toFixed(2)}`,
+  ].join('\n');
+
+  frameSampleCount = 0;
+  frameSampleTotalMs = 0;
+  frameSampleMaxMs = 0;
+  hudLastUpdateMs = now;
+}
+
+function showLoading(show: boolean, message = 'Generating Menger Sponge...'): void {
+  if (show) {
+    loadingText.textContent = message;
+  }
+
   loadingOverlay.classList.toggle('hidden', !show);
 }
 
@@ -192,18 +484,17 @@ function applyLiveSettings(cfg: Settings): void {
   controls.autoRotate = cfg.autoRotate;
   controls.autoRotateSpeed = cfg.rotationSpeed * 2;
 
-  if (instancedMesh) {
-    const material = instancedMesh.material;
-    material.color.set(cfg.spongeColor);
-    material.wireframe = cfg.wireframe;
-    material.transparent = cfg.opacity < 1;
-    material.opacity = cfg.opacity;
-    material.flatShading = cfg.flatShading;
-    material.needsUpdate = true;
+  if (spongeMaterial) {
+    spongeMaterial.color.set(cfg.spongeColor);
+    spongeMaterial.wireframe = cfg.wireframe;
+    spongeMaterial.transparent = cfg.opacity < 1;
+    spongeMaterial.opacity = cfg.opacity;
+    spongeMaterial.flatShading = cfg.flatShading;
+    spongeMaterial.needsUpdate = true;
   }
 
-  if (edgesMesh) {
-    edgesMesh.material.color.set(cfg.edgeColor);
+  if (edgeMaterial) {
+    edgeMaterial.color.set(cfg.edgeColor);
   }
 }
 
@@ -284,8 +575,11 @@ function onResize(): void {
 window.addEventListener('resize', onResize);
 onResize();
 
-function animate(): void {
+function animate(now = performance.now()): void {
   requestAnimationFrame(animate);
+  const frameMs = lastFrameTimeMs > 0 ? now - lastFrameTimeMs : 0;
+  lastFrameTimeMs = now;
+  updatePerfHud(now, frameMs);
   controls.update();
   renderer.render(scene, camera);
 }
